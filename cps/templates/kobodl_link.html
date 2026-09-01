@@ -58,7 +58,9 @@
     <p>
       {{_('Open the Kobo activation page, sign in, and enter this code:')}}
     </p>
-    <h2 id="kobodl_code" style="letter-spacing: 3px;"></h2>
+    {# Not an <h2>: the caliBlur theme pins `.well > h2` to the page-title slot at the top of
+       the window, which threw the code out of this box and over the page heading #}
+    <div id="kobodl_code" style="font-size: 2em; font-weight: bold; letter-spacing: 3px; margin: 10px 0;"></div>
     <p>
       <a id="kobodl_activation_url" href="#" target="_blank" rel="noopener noreferrer"
          class="btn btn-primary">{{_('Open Kobo Activation Page')}}</a>
