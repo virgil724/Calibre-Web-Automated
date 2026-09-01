@@ -101,6 +101,7 @@
 
     var POLL_INTERVAL_MS = 3000;
     var POLL_LIMIT = 100;  // gives the user five minutes to enter the code
+    var POLL_FAILURE_LIMIT = 3;  // consecutive errors tolerated before giving up on polling
 
     function urlFor(template, userkey, productid) {
       var url = template.replace("__USERID__", encodeURIComponent(userkey));
@@ -131,13 +132,24 @@
       }
       $("#kobodl_link_submit").prop("disabled", true);
       $("#kobodl_message").empty();
+      // Clear any previous attempt so an old code cannot be mistaken for the new one
+      $("#kobodl_activation").hide();
+      $("#kobodl_code").empty();
 
       $.post(linkUrl, { email: email })
         .done(function (data) {
+          if (!data || !data.activation_code) {
+            $("#kobodl_link_submit").prop("disabled", false);
+            showMessage({{_('Kobo did not return an activation code. Please try again.')|safe|tojson}}, "danger");
+            return;
+          }
           $("#kobodl_code").text(data.activation_code);
           $("#kobodl_activation_url").attr("href", data.activation_url);
+          $("#kobodl_waiting")
+            .removeClass("text-warning").addClass("text-muted")
+            .text({{_('Waiting for you to enter the code…')|safe|tojson}});
           $("#kobodl_activation").show();
-          pollActivation(data.check_url, data.email, 0);
+          pollActivation(data.check_url, data.email, 0, 0);
         })
         .fail(function (xhr) {
           $("#kobodl_link_submit").prop("disabled", false);
@@ -145,10 +157,12 @@
         });
     });
 
-    function pollActivation(check_url, email, attempt) {
+    // Polling must never take the activation code off the screen. The user is copying that
+    // code into kobo.com while this runs, so a failed poll -- transient or final -- leaves the
+    // box exactly where it is and says what happened underneath it.
+    function pollActivation(check_url, email, attempt, failures) {
       if (attempt >= POLL_LIMIT) {
-        $("#kobodl_waiting").text({{_('Timed out waiting for the code. Please start again.')|safe|tojson}});
-        $("#kobodl_link_submit").prop("disabled", false);
+        stopPolling({{_('Gave up waiting for the code to be entered. The code above may still work; use Link Account to start over.')|safe|tojson}});
         return;
       }
 
@@ -161,17 +175,35 @@
         .done(function (data) {
           if (data.success) {
             window.location.reload();
-          } else {
-            window.setTimeout(function () {
-              pollActivation(check_url, email, attempt + 1);
-            }, POLL_INTERVAL_MS);
+            return;
           }
+          $("#kobodl_waiting")
+            .removeClass("text-warning").addClass("text-muted")
+            .text({{_('Waiting for you to enter the code…')|safe|tojson}});
+          window.setTimeout(function () {
+            pollActivation(check_url, email, attempt + 1, 0);
+          }, POLL_INTERVAL_MS);
         })
         .fail(function (xhr) {
-          $("#kobodl_activation").hide();
-          $("#kobodl_link_submit").prop("disabled", false);
-          showMessage(errorFrom(xhr, {{_('Linking this Kobo account failed.')|safe|tojson}}), "danger");
+          var failed = failures + 1;
+          if (failed >= POLL_FAILURE_LIMIT) {
+            stopPolling(errorFrom(xhr, {{_('Lost contact while waiting for the code.')|safe|tojson}}));
+            return;
+          }
+          // Could be a restarted kobodl or a blip; keep the code up and try again
+          $("#kobodl_waiting")
+            .removeClass("text-muted").addClass("text-warning")
+            .text({{_('Still checking…')|safe|tojson}});
+          window.setTimeout(function () {
+            pollActivation(check_url, email, attempt + 1, failed);
+          }, POLL_INTERVAL_MS);
         });
+    }
+
+    // Ends polling but deliberately leaves #kobodl_activation, and the code in it, on screen
+    function stopPolling(text) {
+      $("#kobodl_waiting").removeClass("text-muted").addClass("text-warning").text(text);
+      $("#kobodl_link_submit").prop("disabled", false);
     }
 
     $(".kobodl-remove").on("click", function () {
