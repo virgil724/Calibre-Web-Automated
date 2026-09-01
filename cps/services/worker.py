@@ -329,4 +329,6 @@ class CalibreTask:
         self.done_event.set()
 
     def __str__(self):
-        return self.name
+        # Task names are often lazy_gettext() strings and Python rejects a __str__ that
+        # returns anything but a real str, so resolve it here for every task at once
+        return str(self.name)
