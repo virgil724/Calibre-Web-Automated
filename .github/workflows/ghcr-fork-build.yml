@@ -119,4 +119,4 @@ jobs:
             if [ -n "$BASELINE_TAG" ]; then
               echo "| \`$BASELINE_TAG\` (baseline) | $(size_of ${{ env.IMAGE_NAME }}:$BASELINE_TAG) |"
             fi
-          } >> $GITHUB_STEP_SUMMARY
+          } | tee -a $GITHUB_STEP_SUMMARY
