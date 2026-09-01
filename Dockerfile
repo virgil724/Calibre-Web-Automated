@@ -33,7 +33,11 @@ SHELL ["/bin/bash", "-c"]
 
 # STEP 1 - Install Required Packages
 RUN \
-  # STEP 1.1 - Add deadsnakes PPA for Python 3.13 and install required apt packages
+  # STEP 1.1 - Add deadsnakes PPA for Python 3.13 and install the packages needed to BUILD
+  # this stage's artefacts. Only /lsiopy, /app/calibre, kepubify and lsof survive into the
+  # final image (see the COPY --from=dependencies lines in the final stage), so runtime-only
+  # packages -- Calibre's Qt/X11 libraries included -- do not belong here: this stage never
+  # runs Calibre, it only downloads and extracts it.
   echo "**** add deadsnakes PPA for Python 3.13 ****" && \
   apt-get update && \
   apt-get install -y --no-install-recommends software-properties-common && \
@@ -44,41 +48,10 @@ RUN \
   build-essential \
   libldap2-dev \
   libsasl2-dev \
-  gettext \
+  python3.13 \
   python3.13-dev \
   python3.13-venv \
-  curl && \
-  echo "**** install runtime packages ****" && \
-  apt-get install -y --no-install-recommends \
-  imagemagick \
-  ghostscript \
-  libldap2 \
-  libmagic1 \
-  libsasl2-2 \
-  libxi6 \
-  libxslt1.1 \
-  xdg-utils \
-  inotify-tools \
-  python3.13 \
-  nano \
-  sqlite3 \
-  zip && \
-  # STEP 1.2 - Install additional Calibre required packages
-  apt-get install -y --no-install-recommends \
-  libxtst6 \
-  libxrandr2 \
-  libxkbfile1 \
-  libxcomposite1 \
-  libxcursor1 \
-  libxfixes3 \
-  libxrender1 \
-  libopengl0 \
-  libnss3 \
-  libxkbcommon0 \
-  libegl1 \
-  libxdamage1 \
-  libgl1 \
-  libglx-mesa0 \
+  curl \
   xz-utils \
   binutils && \
   # Install lsof 4.99.5 from source to fix hanging issue with 4.95 (issue #654)
@@ -185,8 +158,11 @@ COPY --from=dependencies /lsiopy /lsiopy
 COPY --from=dependencies /usr/bin/kepubify /usr/bin/kepubify
 COPY --from=dependencies /app/calibre /app/calibre
 COPY --from=dependencies /usr/bin/lsof /usr/bin/lsof
-COPY --from=dependencies /usr/bin/python3.13 /usr/bin/python3.13
-COPY --from=dependencies /usr/lib/python3.13 /usr/lib/python3.13
+# The interpreter and its standard library are NOT copied from the dependencies stage: the
+# runtime apt step below installs python3.13 to those exact paths, and it also resolves the
+# shared libraries the interpreter needs (libssl3, libsqlite3-0, libffi8, libexpat1 ...).
+# Copying them as well would leave a second, shadowed copy of the whole standard library in
+# the image, since a later layer overwriting a file does not reclaim the earlier layer's bytes.
 
 # Install only runtime packages (no build tools)
 RUN \
@@ -207,7 +183,6 @@ RUN \
   xdg-utils \
   inotify-tools \
   python3.13 \
-  nano \
   sqlite3 \
   zip \
   gettext \

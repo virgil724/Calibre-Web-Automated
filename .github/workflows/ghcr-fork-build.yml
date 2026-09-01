@@ -93,3 +93,30 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+      # Compressed layer sizes straight from the registry, so a change in image size is a
+      # number rather than a guess. BASELINE_TAG, when set, is printed alongside for comparison.
+      - name: Report image size
+        continue-on-error: true  # reporting only; never fail a good build over it
+        env:
+          BASELINE_TAG: ${{ vars.BASELINE_TAG }}
+        run: |
+          size_of() {
+            docker buildx imagetools inspect --raw "$1" 2>/dev/null | jq -r '
+              if .manifests then
+                "manifest list; inspect a platform digest for sizes"
+              else
+                ((.config.size + ([.layers[].size] | add)) / 1048576 | . * 10 | round / 10 | tostring)
+                  + " MiB compressed, " + (.layers | length | tostring) + " layers"
+              end'
+          }
+          {
+            echo "### Image size"
+            echo ""
+            echo "| image | size |"
+            echo "|---|---|"
+            echo "| \`${{ env.IMAGE_TAG }}\` (this build) | $(size_of ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}) |"
+            if [ -n "$BASELINE_TAG" ]; then
+              echo "| \`$BASELINE_TAG\` (baseline) | $(size_of ${{ env.IMAGE_NAME }}:$BASELINE_TAG) |"
+            fi
+          } >> $GITHUB_STEP_SUMMARY
