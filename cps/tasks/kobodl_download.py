@@ -44,21 +44,23 @@ class TaskKobodlDownload(CalibreTask):
         )
         headers = {'X-Internal-Secret': self.secret, 'X-Owner-Id': self.owner_token}
 
+        # These reach the Tasks UI through jsonify() in tasks_status.py, so they have to be
+        # real strings -- a LazyString here breaks the whole task list, not just this row
         try:
             response = requests.get(url, headers=headers, stream=True, timeout=DOWNLOAD_TIMEOUT)
         except requests.RequestException as ex:
             log.error("kobodl download request failed: %s", ex)
-            self._handleError(N_(u"Could not reach the kobodl service"))
+            self._handleError("Could not reach the kobodl service")
             return
 
         try:
             if response.status_code == 404:
                 # kobodl answers 404 for a Kobo account that is not owned by this user
-                self._handleError(N_(u"This Kobo account is no longer linked to your CWA account"))
+                self._handleError("This Kobo account is no longer linked to your CWA account")
                 return
             if response.status_code != 200:
                 log.error("kobodl download returned HTTP %s for %s", response.status_code, url)
-                self._handleError(N_(u"kobodl could not download this book"))
+                self._handleError("kobodl could not download this book")
                 return
         finally:
             # Closes the connection without reading the body, see the class docstring
@@ -68,7 +70,9 @@ class TaskKobodlDownload(CalibreTask):
 
     @property
     def name(self):
-        return N_(u"Kobo Download")
+        # CalibreTask.__str__ returns this and Python rejects a __str__ that hands back a
+        # LazyString, so resolve the translation here (as cps/tasks/duplicate_scan.py does)
+        return str(N_(u"Kobo Download"))
 
     @property
     def is_cancellable(self):
