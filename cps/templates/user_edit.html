@@ -293,7 +293,7 @@
     {% endif %}
     
     <!-- OAuth & API Integrations Card -->
-    {% if (registered_oauth.keys()| length > 0 and not new_user and profile) or (hardcover_support and not new_user) or (kobo_support and not new_user) %}
+    {% if (registered_oauth.keys()| length > 0 and not new_user and profile) or (hardcover_support and not new_user) or (kobo_support and not new_user) or (kobodl_support and profile and not new_user) %}
     <div class="settings-container" style="max-width: none; margin-inline: 0rem;">
       <h4 class="settings-section-header">{{_('OAuth & API Integrations')}}</h4>
       
@@ -336,6 +336,15 @@
           <label for="kobo_only_shelves_sync">{{_('Sync only books in selected shelves with Kobo')}}</label>
         </div>
         {% endif %}
+      </div>
+      {% endif %}
+
+      {# Only on your own profile: the link below acts on the logged in user, not on `content` #}
+      {% if kobodl_support and profile and not new_user %}
+      <div style="margin-top: 25px;">
+        <label style="display: block; margin-bottom: 12px; font-weight: bold;">{{ _('Kobo Account Downloads')}}</label>
+        <p class="cwa-settings-tip">{{_('Link a Kobo account to download the books you own there into this library.')}}</p>
+        <a class="btn btn-default" id="config_kobodl_link" href="{{ url_for('kobodl_bridge.index') }}">{{_('Manage Kobo Accounts')}}</a>
       </div>
       {% endif %}
     </div>

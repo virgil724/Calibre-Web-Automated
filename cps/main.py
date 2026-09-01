@@ -20,6 +20,7 @@ def main():
     app = create_app()
 
     from .cwa_functions import switch_theme, library_refresh, convert_library, epub_fixer, cwa_stats, cwa_check_status, cwa_settings, cwa_logs, profile_pictures, cwa_internal
+    from .kobodl_bridge import kobodl_bridge
     from .web import web
     from .opds import opds
     from .admin import admi
@@ -66,6 +67,10 @@ def main():
     app.register_blueprint(cwa_logs)
     app.register_blueprint(profile_pictures)
     app.register_blueprint(cwa_internal)
+    # Not gated on kobo_available: this talks to a kobodl service over HTTP and is unrelated
+    # to Kobo device sync. Its routes answer 503 until KOBODL_BASE_URL/KOBODL_INTERNAL_SECRET
+    # are set.
+    app.register_blueprint(kobodl_bridge)
 
     # Stock CW
     app.register_blueprint(search)

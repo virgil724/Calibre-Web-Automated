@@ -51,6 +51,7 @@ from .services.worker import WorkerThread
 from .tasks_status import render_task_status
 from .usermanagement import user_login_required
 from .string_helper import strip_whitespaces
+from .kobodl_bridge import kobodl_configured
 
 # CWA Imports
 import sqlite3
@@ -2685,6 +2686,7 @@ def profile():
     translations = get_available_locale()
     kobo_support = feature_support['kobo'] and config.config_kobo_sync
     hardcover_support = feature_support['hardcover']
+    kobodl_support = kobodl_configured()
     if feature_support['oauth'] and config.config_login_type == 2:
         oauth_status = get_oauth_status()
         local_oauth_check = oauth_bb.oauth_check
@@ -2759,6 +2761,7 @@ def profile():
                                  content=current_user,
                                  config=config,
                                  kobo_support=kobo_support,
+                                 kobodl_support=kobodl_support,
                                  hardcover_support=hardcover_support,
                                  system_shelf_templates=system_shelf_templates,
                                  hidden_shelf_templates=hidden_shelf_templates,

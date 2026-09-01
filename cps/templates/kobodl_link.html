@@ -1,0 +1,277 @@
+{% extends "layout.html" %}
+
+{% block body %}
+<div class="discover">
+  <h2>{{_('Kobo Accounts')}}</h2>
+  <p class="text-muted">
+    {{_('Link a Kobo account to download the books you own there straight into this library.')}}
+  </p>
+
+  {% if kobodl_error %}
+  <div class="alert alert-danger">{{ kobodl_error }}</div>
+  {% endif %}
+
+  <div id="kobodl_message"></div>
+
+  {% if kobodl_users %}
+  <table class="table table-striped" id="kobodl_accounts">
+    <thead>
+      <tr>
+        <th>{{_('Email')}}</th>
+        <th>{{_('Device ID')}}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in kobodl_users %}
+      <tr>
+        <td>{{ user.Email }}</td>
+        <td>{{ user.DeviceId }}</td>
+        <td>
+          <button type="button" class="btn btn-default btn-sm kobodl-books"
+                  data-userkey="{{ user.UserKey }}" data-email="{{ user.Email }}">
+            {{_('Show Books')}}
+          </button>
+          <button type="button" class="btn btn-danger btn-sm kobodl-remove"
+                  data-userkey="{{ user.UserKey }}" data-email="{{ user.Email }}">
+            {{_('Unlink')}}
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif not kobodl_error %}
+  <p>{{_('No Kobo accounts linked yet.')}}</p>
+  {% endif %}
+
+  <h3>{{_('Link a Kobo Account')}}</h3>
+  <form id="kobodl_link_form" class="form-inline">
+    <div class="form-group">
+      <label for="kobodl_email">{{_('Kobo account email')}}</label>
+      <input type="email" class="form-control" id="kobodl_email" name="email" required>
+    </div>
+    <button type="submit" class="btn btn-default" id="kobodl_link_submit">{{_('Link Account')}}</button>
+  </form>
+
+  <div id="kobodl_activation" class="well" style="display: none; margin-top: 20px;">
+    <p>
+      {{_('Open the Kobo activation page, sign in, and enter this code:')}}
+    </p>
+    <h2 id="kobodl_code" style="letter-spacing: 3px;"></h2>
+    <p>
+      <a id="kobodl_activation_url" href="#" target="_blank" rel="noopener noreferrer"
+         class="btn btn-primary">{{_('Open Kobo Activation Page')}}</a>
+    </p>
+    <p id="kobodl_waiting" class="text-muted">{{_('Waiting for you to enter the code…')}}</p>
+  </div>
+
+  <div id="kobodl_books_panel" style="display: none; margin-top: 25px;">
+    <h3 id="kobodl_books_heading"></h3>
+    <div class="form-group">
+      <input type="text" class="form-control" id="kobodl_books_filter"
+             placeholder="{{_('Filter by title or author')}}">
+    </div>
+    <p id="kobodl_books_empty" class="text-muted" style="display: none;">
+      {{_('No books found in this Kobo account.')}}
+    </p>
+    <table class="table table-striped" id="kobodl_books_table" style="display: none;">
+      <thead>
+        <tr>
+          <th>{{_('Title')}}</th>
+          <th>{{_('Author')}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+  $(function () {
+    // Built from url_for so they keep working under a reverse proxy path prefix
+    var linkUrl = "{{ url_for('kobodl_bridge.link_account') }}";
+    var checkUrl = "{{ url_for('kobodl_bridge.check_activation') }}";
+    var booksUrlTemplate = "{{ url_for('kobodl_bridge.list_books', userid='__USERID__') }}";
+    var removeUrlTemplate = "{{ url_for('kobodl_bridge.remove_account', userid='__USERID__') }}";
+    var downloadUrlTemplate = "{{ url_for('kobodl_bridge.download_book', userid='__USERID__', productid='__PRODUCTID__') }}";
+
+    var POLL_INTERVAL_MS = 3000;
+    var POLL_LIMIT = 100;  // gives the user five minutes to enter the code
+
+    function urlFor(template, userkey, productid) {
+      var url = template.replace("__USERID__", encodeURIComponent(userkey));
+      if (productid !== undefined) {
+        url = url.replace("__PRODUCTID__", encodeURIComponent(productid));
+      }
+      return url;
+    }
+
+    function showMessage(text, level) {
+      $("#kobodl_message").html(
+        $("<div>").addClass("alert alert-" + level).text(text)
+      );
+    }
+
+    function errorFrom(xhr, fallback) {
+      if (xhr.responseJSON && xhr.responseJSON.error) {
+        return xhr.responseJSON.error;
+      }
+      return fallback;
+    }
+
+    $("#kobodl_link_form").on("submit", function (event) {
+      event.preventDefault();
+      var email = $("#kobodl_email").val().trim();
+      if (!email) {
+        return;
+      }
+      $("#kobodl_link_submit").prop("disabled", true);
+      $("#kobodl_message").empty();
+
+      $.post(linkUrl, { email: email })
+        .done(function (data) {
+          $("#kobodl_code").text(data.activation_code);
+          $("#kobodl_activation_url").attr("href", data.activation_url);
+          $("#kobodl_activation").show();
+          pollActivation(data.check_url, data.email, 0);
+        })
+        .fail(function (xhr) {
+          $("#kobodl_link_submit").prop("disabled", false);
+          showMessage(errorFrom(xhr, {{_('Could not start linking this Kobo account.')|safe|tojson}}), "danger");
+        });
+    });
+
+    function pollActivation(check_url, email, attempt) {
+      if (attempt >= POLL_LIMIT) {
+        $("#kobodl_waiting").text({{_('Timed out waiting for the code. Please start again.')|safe|tojson}});
+        $("#kobodl_link_submit").prop("disabled", false);
+        return;
+      }
+
+      $.ajax({
+        url: checkUrl,
+        method: "POST",
+        contentType: "application/json",
+        data: JSON.stringify({ check_url: check_url, email: email })
+      })
+        .done(function (data) {
+          if (data.success) {
+            window.location.reload();
+          } else {
+            window.setTimeout(function () {
+              pollActivation(check_url, email, attempt + 1);
+            }, POLL_INTERVAL_MS);
+          }
+        })
+        .fail(function (xhr) {
+          $("#kobodl_activation").hide();
+          $("#kobodl_link_submit").prop("disabled", false);
+          showMessage(errorFrom(xhr, {{_('Linking this Kobo account failed.')|safe|tojson}}), "danger");
+        });
+    }
+
+    $(".kobodl-remove").on("click", function () {
+      var button = $(this);
+      var userkey = button.data("userkey");
+      button.prop("disabled", true);
+      $("#kobodl_message").empty();
+
+      $.post(urlFor(removeUrlTemplate, userkey))
+        .done(function () {
+          window.location.reload();
+        })
+        .fail(function (xhr) {
+          button.prop("disabled", false);
+          showMessage(errorFrom(xhr, {{_('Could not unlink this Kobo account.')|safe|tojson}}), "danger");
+        });
+    });
+
+    $(".kobodl-books").on("click", function () {
+      var button = $(this);
+      var userkey = button.data("userkey");
+      var email = button.data("email");
+
+      $("#kobodl_books_heading").text(email);
+      $("#kobodl_books_panel").show();
+      $("#kobodl_books_table").hide();
+      $("#kobodl_books_empty").hide();
+      $("#kobodl_message").empty();
+      button.prop("disabled", true);
+
+      $.getJSON(urlFor(booksUrlTemplate, userkey))
+        .done(function (data) {
+          renderBooks(userkey, data.books || []);
+        })
+        .fail(function (xhr) {
+          showMessage(errorFrom(xhr, {{_('Could not list the books in this Kobo account.')|safe|tojson}}), "danger");
+        })
+        .always(function () {
+          button.prop("disabled", false);
+        });
+    });
+
+    function renderBooks(userkey, books) {
+      var tbody = $("#kobodl_books_table tbody").empty();
+
+      if (!books.length) {
+        $("#kobodl_books_empty").show();
+        return;
+      }
+
+      books.forEach(function (book) {
+        // .text() throughout: titles and authors come from Kobo, not from us
+        var title = $("<td>").text(book.Title + (book.Audiobook ? " 🎧" : "") + (book.Archived ? " 🗃️" : ""));
+        var author = $("<td>").text(book.Author || "");
+        var action = $("<td>");
+
+        if (book.Audiobook) {
+          action.append($("<span>").addClass("text-muted").text({{_('Audiobooks cannot be downloaded')|safe|tojson}}));
+        } else {
+          action.append(
+            $("<button>")
+              .attr("type", "button")
+              .addClass("btn btn-default btn-sm kobodl-download")
+              .data("revisionid", book.RevisionId)
+              .data("title", book.Title)
+              .text({{_('Download')|safe|tojson}})
+          );
+        }
+
+        tbody.append($("<tr>").append(title, author, action));
+      });
+
+      $("#kobodl_books_table").show();
+      $("#kobodl_books_filter").val("").trigger("input");
+
+      tbody.find(".kobodl-download").on("click", function () {
+        var button = $(this);
+        button.prop("disabled", true);
+
+        $.post(urlFor(downloadUrlTemplate, userkey, button.data("revisionid")),
+               { title: button.data("title") })
+          .done(function () {
+            button.text({{_('Queued')|safe|tojson}});
+            showMessage({{_('The download was queued. The book appears in your library once it finishes.')|safe|tojson}}, "info");
+          })
+          .fail(function (xhr) {
+            button.prop("disabled", false);
+            showMessage(errorFrom(xhr, {{_('Could not queue this download.')|safe|tojson}}), "danger");
+          });
+      });
+    }
+
+    $("#kobodl_books_filter").on("input", function () {
+      var needle = $(this).val().toLowerCase();
+      $("#kobodl_books_table tbody tr").each(function () {
+        var row = $(this);
+        var haystack = row.children("td").slice(0, 2).text().toLowerCase();
+        row.toggle(haystack.indexOf(needle) !== -1);
+      });
+    });
+  });
+</script>
+{% endblock %}
