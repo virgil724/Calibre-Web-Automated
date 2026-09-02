@@ -1,9 +1,14 @@
 name: Build & Push - GHCR (fork)
-# Builds a single-arch image and pushes it to this fork's own GitHub Container Registry.
+# Builds a multi-arch image and pushes it to this fork's own GitHub Container Registry.
 #
 # The upstream dev workflow cannot run on a fork: it builds arm64 on a [self-hosted, linux,
 # ARM64] runner that only upstream has, its merge job depends on that build, and it logs in
-# to Docker Hub with secrets a fork does not hold. This one needs nothing but GITHUB_TOKEN.
+# to Docker Hub with secrets a fork does not hold. This one needs nothing but GITHUB_TOKEN
+# and the arm64 runners GitHub gives public repos for free.
+#
+# Each arch is built natively and pushed by digest, then merged into one manifest list. The
+# Dockerfile branches on `uname -m` to pick the right Calibre build, so emulating arm64 on
+# an amd64 runner would work but take hours; a native runner is both faster and honest.
 
 on:
   push:
@@ -31,12 +36,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-amd64:
-    name: Build & Push amd64
-    runs-on: ubuntu-latest
+  build:
+    name: Build & Push ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64/v8
 
     steps:
       - name: Set build ref
@@ -70,26 +85,85 @@ jobs:
         with:
           driver-opts: network=host
 
-      - name: Build and push
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           provenance: false
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64
-          push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-${{ github.sha }}
+          platforms: ${{ matrix.platform }}
+          # Separate scopes, or the two arches overwrite each other's cache
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             BUILD_DATE=${{ github.event.repository.updated_at }}
             VERSION=FORK_BUILD-${{ env.IMAGE_TAG }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge manifest
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set image name and tag
+        run: |
+          echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          sanitized_branch=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9.-]/-/g')
+          echo "IMAGE_TAG=dev-${sanitized_branch}" >> $GITHUB_ENV
+
+      - name: GitHub Container Registry Login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}-${{ github.sha }} \
+            $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Summary
         run: |
           echo "### Image pushed" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          # Informational only -- the image is already pushed, so never fail the job here
+          docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            >> $GITHUB_STEP_SUMMARY 2>&1 || true
           echo '```' >> $GITHUB_STEP_SUMMARY
