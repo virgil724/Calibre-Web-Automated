@@ -24,6 +24,8 @@ on:
       - '**/compile_translations.sh'
       - 'koreader/**'
       - '**/cps.py'
+      # Changing how the image is built is a reason to rebuild it
+      - '.github/workflows/ghcr-fork-build.yml'
   workflow_dispatch:
     inputs:
       ref:
